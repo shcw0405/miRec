@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from BasicModel import BasicModel, CapsuleNetwork
+from .BasicModel import BasicModel, CapsuleNetwork
 
 class PAMI(BasicModel):
     def __init__(self, item_num, user_num, hidden_size, batch_size, interest_num=4, seq_len=50, add_pos=True, args=None, device=None):

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from BasicModel import BasicModel, CapsuleNetwork
+from .BasicModel import BasicModel, CapsuleNetwork
 
 class Re4(BasicModel):
     

@@ -7,14 +7,7 @@ import torch
 from datetime import datetime
 
 from torch.utils.data import DataLoader
-from DNN import DNN
-from Pop import Pop
-from GRU4Rec import GRU4Rec
-from MIND import MIND
-from ComiRec import ComiRec_DR, ComiRec_SA
-from REMI import REMI
-from Re4 import Re4
-from PAMI import PAMI
+from models import *
 
 
 def get_parser():

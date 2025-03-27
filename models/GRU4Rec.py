@@ -2,13 +2,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from BasicModel import BasicModel
+from .BasicModel import BasicModel
 
 
 class GRU4Rec(BasicModel):
 
-    def __init__(self, item_num, hidden_size, batch_size, seq_len=50, num_layers=3, dropout=0.1):
-        super(GRU4Rec, self).__init__(item_num, hidden_size, batch_size, seq_len)
+    def __init__(self, item_num, user_num, hidden_size, batch_size, seq_len=50, num_layers=3, dropout=0.1):
+        super(GRU4Rec, self).__init__(item_num, user_num, hidden_size, batch_size, seq_len)
         
         self.gru = nn.GRU(
                         input_size = self.hidden_size, 
@@ -19,9 +19,9 @@ class GRU4Rec(BasicModel):
                     )
 
 
-    def forward(self, item_list, label_list, mask, device, train=True):
+    def forward(self, item_list, user_list, label_list, mask, device, train=True):
 
-        item_eb = self.embeddings(item_list) # [b, s, h]
+        item_eb = self.item_embeddings(item_list) # [b, s, h]
         output, fin_state = self.gru(item_eb) # [b, s, h], [num_layers, b, h]
         user_eb = fin_state[-1]
         scores = self.calculate_score(user_eb)

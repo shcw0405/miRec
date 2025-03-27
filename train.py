@@ -8,7 +8,7 @@ print('pid:%d' % (pid))
 
 import torch
 from utils import get_parser, setup_seed
-from evalution_copy import train, test, output
+from evalution_copy import *
 
 if __name__ == '__main__':
     print(sys.argv)
@@ -93,6 +93,7 @@ if __name__ == '__main__':
         test_iter = 200
         path = './data/tmall_data/'
         item_count = 946102 + 1
+        user_count = 438379 + 1
     elif args.dataset == 'rocket':
         batch_size = 512
         seq_len = 20

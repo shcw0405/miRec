@@ -10,6 +10,7 @@ import torch.nn as nn
 import os
 import signal
 import pickle
+import json
 
 
 error_flag = {'sig':0}
@@ -265,7 +266,6 @@ def train(device, train_file, valid_file, test_file, dataset, model_type, item_c
 
     trials = 0
     
-    log_file = "training_log.txt"
     epoch = 1
     
     print('training begin')
@@ -323,49 +323,46 @@ def train(device, train_file, valid_file, test_file, dataset, model_type, item_c
 
             total_loss += loss
         
-            with open(log_file, "a") as f:
-                if iter%test_iter == 0:
-                    model.eval()
-                    f.write(f"=== Epoch {epoch} ===\n")
-                    epoch = epoch + 1
-                    
-                    metrics = evaluate(model, valid_data, hidden_size, device, 20, args=args)
-                    log_str = 'iter: %d, train loss: %.4f \n' % (iter, total_loss / test_iter) # 打印loss
-                    if metrics != {}:
-                        log_str += ', '.join(['valid ' + key + '@20' + ': %.6f' % value for key, value in metrics.items()])
-                    print(exp_name)
-    #                print(log_str)
+            if iter%test_iter == 0:
+                model.eval()
+                epoch = epoch + 1
+                
+                metrics = evaluate(model, valid_data, hidden_size, device, 20, args=args)
+                log_str = 'iter: %d, train loss: %.4f \n' % (iter, total_loss / test_iter) # 打印loss
+                if metrics != {}:
+                    log_str += ', '.join(['valid ' + key + '@20' + ': %.6f' % value for key, value in metrics.items()])
+                print(exp_name)
+#                print(log_str)
 
-                    model.eval()
-                    metrics = evaluate(model, valid_data, hidden_size, device, 50, args=args)
-    #                log_str = 'iter: %d, train loss: %.4f' % (iter, total_loss / test_iter) # 打印loss
-                    if metrics != {}:
-                        log_str += '\n' + ', '.join(['valid ' + key + '@50' + ': %.6f' % value for key, value in metrics.items()])
-    #                print(exp_name)
-                    print(log_str)
-                    f.write(log_str)
+                model.eval()
+                metrics = evaluate(model, valid_data, hidden_size, device, 50, args=args)
+#                log_str = 'iter: %d, train loss: %.4f' % (iter, total_loss / test_iter) # 打印loss
+                if metrics != {}:
+                    log_str += '\n' + ', '.join(['valid ' + key + '@50' + ': %.6f' % value for key, value in metrics.items()])
+#                print(exp_name)
+                print(log_str)
 
-                    # 保存recall最佳的模型
-                    if 'recall' in metrics:
-                        recall = metrics['recall']
-                        if recall > best_metric:
-                            best_metric = recall
-                            save_model(model, best_model_path)
-                            trials = 0
-                        else:
-                            trials += 1
-                            if trials > patience: # early stopping
-                                print("early stopping!")
-                                break
+                # 保存recall最佳的模型
+                if 'recall' in metrics:
+                    recall = metrics['recall']
+                    if recall > best_metric:
+                        best_metric = recall
+                        save_model(model, best_model_path)
+                        trials = 0
+                    else:
+                        trials += 1
+                        if trials > patience: # early stopping
+                            print("early stopping!")
+                            break
 
-                    # 每次test之后loss_sum置零
-                    total_loss = 0.0
-                    test_time = time.time()
-                    print("time interval: %.4f min" % ((test_time-start_time)/60.0))
-                    sys.stdout.flush()
+                # 每次test之后loss_sum置零
+                total_loss = 0.0
+                test_time = time.time()
+                print("time interval: %.4f min" % ((test_time-start_time)/60.0))
+                sys.stdout.flush()
 
-                if iter >= max_iter * 1000: # 超过最大迭代次数，退出训练
-                    break
+            if iter >= max_iter * 1000: # 超过最大迭代次数，退出训练
+                break
 
     except KeyboardInterrupt:
         print('-' * 99)
@@ -383,46 +380,45 @@ def train(device, train_file, valid_file, test_file, dataset, model_type, item_c
 
 # 打开文件并追加写入模式
 
-    with open(log_file, "a") as f:
-        # 标记当前是第几轮训练
-        f.write(f"=== Epoch {epoch} ===\n")
-        epoch = epoch + 1
-        # 训练结束后用valid_data测试一次
-        metrics = evaluate(model, valid_data, hidden_size, device, 20, args=args)
-        f.write(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]) + "\n")
-        print(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]))
+    # 标记当前是第几轮训练
+    f.write(f"=== Epoch {epoch} ===\n")
+    epoch = epoch + 1
+    # 训练结束后用valid_data测试一次
+    metrics = evaluate(model, valid_data, hidden_size, device, 20, args=args)
+    f.write(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]) + "\n")
+    print(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]))
 
-        metrics = evaluate(model, valid_data, hidden_size, device, 50, args=args)
-        f.write(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]) + "\n")
-        print(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]))
-        
-        # 训练结束后用test_data测试一次
-        print("Test result:")
-        test_data = get_DataLoader(test_file, batch_size, seq_len, train_flag=0,  args=args)
-        metrics = evaluate(model, test_data, hidden_size, device, 20, args=args)
-        for key, value in metrics.items():
-            print('test ' + key + '@20' + '=%.6f' % value)
-        f.write(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]) + "\n")
+    metrics = evaluate(model, valid_data, hidden_size, device, 50, args=args)
+    f.write(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]) + "\n")
+    print(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]))
+    
+    # 训练结束后用test_data测试一次
+    print("Test result:")
+    test_data = get_DataLoader(test_file, batch_size, seq_len, train_flag=0,  args=args)
+    metrics = evaluate(model, test_data, hidden_size, device, 20, args=args)
+    for key, value in metrics.items():
+        print('test ' + key + '@20' + '=%.6f' % value)
+    f.write(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]) + "\n")
 
-        metrics = evaluate(model, test_data, hidden_size, device, 50, args=args)
-        for key, value in metrics.items():
-            print('test ' + key + '@50' + '=%.6f' % value)
-        f.write(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]) + "\n")
+    metrics = evaluate(model, test_data, hidden_size, device, 50, args=args)
+    for key, value in metrics.items():
+        print('test ' + key + '@50' + '=%.6f' % value)
+    f.write(', '.join(['Valid ' + key + ': %.6f' % value for key, value in metrics.items()]) + "\n")
 
-        if hasattr(model, 'item_embeddings'):
-            item_embeddings = model.item_embeddings.weight.cpu().detach().numpy()
-        if hasattr(model, 'user_embeddings'):
-            user_embeddings = model.user_embeddings.weight.cpu().detach().numpy()
+    if hasattr(model, 'item_embeddings'):
+        item_embeddings = model.item_embeddings.weight.cpu().detach().numpy()
+    if hasattr(model, 'user_embeddings'):
+        user_embeddings = model.user_embeddings.weight.cpu().detach().numpy()
 
-        if item_embeddings is not None:
-            save_path = os.path.join(best_model_path, 'item_embeddings.npy')
-            np.save(save_path, item_embeddings)
-            print(f"Item embeddings 已保存至 {save_path}, 形状: {item_embeddings.shape}")
+    if item_embeddings is not None:
+        save_path = os.path.join(best_model_path, 'item_embeddings.npy')
+        np.save(save_path, item_embeddings)
+        print(f"Item embeddings 已保存至 {save_path}, 形状: {item_embeddings.shape}")
 
-        if user_embeddings is not None:
-            save_path = os.path.join(best_model_path, 'user_embeddings.npy')
-            np.save(save_path, user_embeddings)
-            print(f"User embeddings 已保存至 {save_path}, 形状: {user_embeddings.shape}")
+    if user_embeddings is not None:
+        save_path = os.path.join(best_model_path, 'user_embeddings.npy')
+        np.save(save_path, user_embeddings)
+        print(f"User embeddings 已保存至 {save_path}, 形状: {user_embeddings.shape}")
         
 def evaluate_test(model, test_data, hidden_size, device, k=20, coef=None, item_cate_map=None, args=None):
     if model.name=="Pop":
@@ -455,6 +451,10 @@ def evaluate_test(model, test_data, hidden_size, device, k=20, coef=None, item_c
     # 添加统计变量
     history_cate_freq_counter = defaultdict(int)  # 历史序列中类别出现频率计数
     recommendation_cate_freq_counter = defaultdict(int)  # 推荐列表中类别出现频率计数
+    
+    # 添加存储所有用户历史和推荐的列表
+    all_user_histories = []
+    all_user_recommendations = []
     
     total = 0
     total_recall = 0.0
@@ -522,6 +522,22 @@ def evaluate_test(model, test_data, hidden_size, device, k=20, coef=None, item_c
                 for cate, count in rec_cate_count.items():
                     recommendation_cate_freq_counter[count] += 1
                 
+                # 收集用户历史和推荐数据
+                try:
+                    user_id = users[i].item() if hasattr(users[i], 'item') else int(users[i])
+                except:
+                    user_id = str(users[i])
+                
+                all_user_histories.append({
+                    'user_id': user_id,
+                    'history_categories': dict(history_cate_count)
+                })
+                
+                all_user_recommendations.append({
+                    'user_id': user_id,
+                    'recommendation_categories': dict(rec_cate_count)
+                })
+                
                 # 计算歧视度量
                 discrimination_score, category_changes = calculate_discrimination(history_cate_count, rec_cate_count)
                 total_discrimination += discrimination_score
@@ -588,21 +604,6 @@ def evaluate_test(model, test_data, hidden_size, device, k=20, coef=None, item_c
                     
                 item_att_w_np = item_att_w.cpu().detach().numpy()  # shape = [batch_size, num_interest, seq_len]
 
-                for i in range(len(targets)):
-                    # 对第 i 个用户的 item_att_w 求 argmax，统计每个兴趣被关注的次数
-#                    print(i)
-                    att_max = np.argmax(item_att_w_np[i], axis=0)  # shape = [seq_len, ]，元素范围 [0, num_interest)
-                    nozero = np.where(item_att_w_np[i][0] != 0)[0][-1]  # 最后一个不为0的位置 也就是有效位置
-
-                    att_max_valid = att_max[:nozero+1]  # Only consider valid positions up to nozero
-                    unique_interests_count = np.bincount(att_max_valid)  # Count occurrences of each interest
-
-                    # If some interests have 0 occurrences, the length might be shorter than max interest id
-                    # Pad with zeros to ensure all interests are represented
-                    if len(unique_interests_count) < ni:  # ni is num_interest
-                        unique_interests_count = np.pad(unique_interests_count, (0, ni - len(unique_interests_count)))
-                    unique_interests = set(att_max_valid)  # Keep track of unique interests for cold/valid user classification
-
 
                 # 上述if-else只是为了用不同方式计算得到最后推荐的结果item列表
                 for no, iid in enumerate(item_list_set): # 对于每一个推荐的物品
@@ -640,6 +641,22 @@ def evaluate_test(model, test_data, hidden_size, device, k=20, coef=None, item_c
                 for cate, count in rec_cate_count.items():
                     recommendation_cate_freq_counter[count] += 1
                 
+                # 收集用户历史和推荐数据
+                try:
+                    user_id = users[i].item() if hasattr(users[i], 'item') else int(users[i])
+                except:
+                    user_id = str(users[i])
+                
+                all_user_histories.append({
+                    'user_id': user_id,
+                    'history_categories': dict(history_cate_count)
+                })
+                
+                all_user_recommendations.append({
+                    'user_id': user_id,
+                    'recommendation_categories': dict(rec_cate_count)
+                })
+                
                 # 计算歧视度量
                 discrimination_score, category_changes = calculate_discrimination(history_cate_count, rec_cate_count)
                 total_discrimination += discrimination_score
@@ -665,170 +682,35 @@ def evaluate_test(model, test_data, hidden_size, device, k=20, coef=None, item_c
     diversity = total_diversity * 1.0 / total # 多样性
     discrimination = total_discrimination / total # 歧视指标
 
-    # 保存类别频率统计数据
-    save_category_frequency_distribution(history_cate_freq_counter, recommendation_cate_freq_counter, topN)
-
-    # 可以选择保存详细的歧视数据
-    if args is not None and hasattr(args, 'save_discrimination_detail') and args.save_discrimination_detail:
-        with open(f'discrimination_detail_top{topN}.pkl', 'wb') as f:
-            pickle.dump(discrimination_detail, f)
-
-    return {'recall': recall, 'ndcg': ndcg, 'hitrate': hitrate, 'diversity': diversity, 'discrimination': discrimination}
-
-def save_category_frequency_distribution(history_freq, recommendation_freq, topN):
-    """
-    保存历史序列和推荐列表中类别频率的分布
-    """
-    import json
-    import os
+    # 在返回之前，保存历史和推荐数据到文件
+    print("保存类别分布数据...")
     
-    # 确保目录存在
-    os.makedirs('analysis_results', exist_ok=True)
-    
-    # 计算总类别数
-    total_history_cate = sum(history_freq.values())
-    total_rec_cate = sum(recommendation_freq.values())
-    
-    if total_history_cate == 0 or total_rec_cate == 0:
-        print("警告：没有收集到有效的类别频率数据")
-        return
-    
-    # 将频率转换为百分比
-    history_freq_percent = {str(freq): count / total_history_cate * 100 for freq, count in history_freq.items()}
-    recommendation_freq_percent = {str(freq): count / total_rec_cate * 100 for freq, count in recommendation_freq.items()}
-    
-    # 准备数据
-    result = {
-        'history_frequency': dict(history_freq),
-        'history_frequency_percent': history_freq_percent,
-        'recommendation_frequency': dict(recommendation_freq),
-        'recommendation_frequency_percent': recommendation_freq_percent,
-        'topN': topN
+    # 保存类别频率分布统计数据
+    frequency_data = {
+        "history_frequency": dict(history_cate_freq_counter),
+        "recommendation_frequency": dict(recommendation_cate_freq_counter),
+        "topN": topN
     }
     
-    # 保存数据为JSON文件
-    with open(f'analysis_results/category_frequency_distribution_top{topN}.json', 'w') as f:
-        json.dump(result, f, indent=2)
+    # 确保分析结果目录存在
+    if not os.path.exists("analysis_results"):
+        os.makedirs("analysis_results")
     
-    # 打印长尾统计信息
-    print(f"\n类别频率分布统计 (Top {topN}):")
-    print(f"历史序列中类别出现1-2次的占比: {(history_freq.get(1, 0) + history_freq.get(2, 0)) / total_history_cate * 100:.2f}%")
-    print(f"推荐列表中类别出现1-2次的占比: {(recommendation_freq.get(1, 0) + recommendation_freq.get(2, 0)) / total_rec_cate * 100:.2f}%")
+    # 保存频率统计数据
+    with open(f"analysis_results/category_frequency_distribution_top{topN}.json", "w") as f:
+        json.dump(frequency_data, f, indent=2)
     
-    # 生成绘图代码
-    plot_code = '''
-import json
-import matplotlib.pyplot as plt
-import numpy as np
-
-# 加载数据
-with open('analysis_results/category_frequency_distribution_top{0}.json', 'r') as f:
-    data = json.load(f)
-
-# 提取数据
-history_freq = data['history_frequency']
-recommendation_freq = data['recommendation_frequency']
-
-# 转换为列表
-history_freqs = [(int(freq), count) for freq, count in history_freq.items()]
-recommendation_freqs = [(int(freq), count) for freq, count in recommendation_freq.items()]
-
-# 排序
-history_freqs.sort(key=lambda x: x[0])
-recommendation_freqs.sort(key=lambda x: x[0])
-
-# 最大频率值
-max_freq = max(max(int(k) for k in history_freq.keys()), max(int(k) for k in recommendation_freq.keys() if recommendation_freq))
-
-# 准备绘图数据
-x_full = list(range(1, max_freq + 1))
-y_history_full = [0] * max_freq
-y_recommendation_full = [0] * max_freq
-
-# 填充数据
-for freq, count in history_freqs:
-    if 1 <= freq <= max_freq:
-        y_history_full[freq-1] = count
-
-for freq, count in recommendation_freqs:
-    if 1 <= freq <= max_freq:
-        y_recommendation_full[freq-1] = count
-
-# 绘图
-plt.figure(figsize=(12, 8))
-
-# 历史序列频率分布
-plt.subplot(2, 1, 1)
-plt.bar(x_full, y_history_full, alpha=0.7, label='历史序列')
-plt.xlabel('类别出现频率')
-plt.ylabel('次数')
-plt.title('历史序列中类别出现频率分布')
-plt.grid(True, linestyle='--', alpha=0.7)
-plt.legend()
-
-# 计算占比
-history_1_2_percent = (y_history_full[0] + y_history_full[1]) / sum(y_history_full) * 100 if sum(y_history_full) > 0 else 0
-plt.text(0.7, 0.9, f'频率1-2的占比: {history_1_2_percent:.2f}%', transform=plt.gca().transAxes)
-
-# 推荐列表频率分布
-plt.subplot(2, 1, 2)
-plt.bar(x_full, y_recommendation_full, alpha=0.7, color='orange', label='推荐列表')
-plt.xlabel('类别出现频率')
-plt.ylabel('次数')
-plt.title('推荐列表中类别出现频率分布')
-plt.grid(True, linestyle='--', alpha=0.7)
-plt.legend()
-
-# 计算占比
-recommendation_1_2_percent = (y_recommendation_full[0] + y_recommendation_full[1]) / sum(y_recommendation_full) * 100 if sum(y_recommendation_full) > 0 else 0
-plt.text(0.7, 0.9, f'频率1-2的占比: {recommendation_1_2_percent:.2f}%', transform=plt.gca().transAxes)
-
-plt.tight_layout()
-plt.savefig('analysis_results/category_frequency_comparison_top{0}.png', dpi=300)
-plt.show()
-
-# 生成长尾比较图
-plt.figure(figsize=(10, 6))
-
-width = 0.35
-x_labels = ['频率1-2', '频率>2']
-history_values = [
-    (y_history_full[0] + y_history_full[1]) / sum(y_history_full) * 100 if sum(y_history_full) > 0 else 0,
-    100 - ((y_history_full[0] + y_history_full[1]) / sum(y_history_full) * 100 if sum(y_history_full) > 0 else 0)
-]
-recommendation_values = [
-    (y_recommendation_full[0] + y_recommendation_full[1]) / sum(y_recommendation_full) * 100 if sum(y_recommendation_full) > 0 else 0,
-    100 - ((y_recommendation_full[0] + y_recommendation_full[1]) / sum(y_recommendation_full) * 100 if sum(y_recommendation_full) > 0 else 0)
-]
-
-x = np.arange(len(x_labels))
-plt.bar(x - width/2, history_values, width, label='历史序列')
-plt.bar(x + width/2, recommendation_values, width, color='orange', label='推荐列表')
-
-plt.xlabel('类别频率')
-plt.ylabel('占比 (%)')
-plt.title('历史序列vs推荐列表 长尾分布比较')
-plt.xticks(x, x_labels)
-plt.grid(True, linestyle='--', alpha=0.3)
-plt.legend()
-
-for i, v in enumerate(history_values):
-    plt.text(i - width/2, v + 0.5, f'{v:.1f}%', ha='center')
-
-for i, v in enumerate(recommendation_values):
-    plt.text(i + width/2, v + 0.5, f'{v:.1f}%', ha='center')
-
-plt.savefig('analysis_results/longtail_comparison_top{0}.png', dpi=300)
-plt.tight_layout()
-plt.show()
-'''.format(topN)
+    # 保存所有用户的历史和推荐数据
+    with open(f"analysis_results/user_histories_top{topN}.json", "w") as f:
+        json.dump(all_user_histories, f, indent=2)
     
-    # 保存绘图代码
-    with open('analysis_results/plot_category_distribution.py', 'w') as f:
-        f.write(plot_code)
+    with open(f"analysis_results/user_recommendations_top{topN}.json", "w") as f:
+        json.dump(all_user_recommendations, f, indent=2)
     
-    print(f"保存了频率分布数据和绘图脚本到 analysis_results/ 目录")
-    print(f"要生成图表，请运行: python analysis_results/plot_category_distribution.py")
+    print(f"类别分布数据已保存到 analysis_results/ 目录")
+    
+    return {'recall': recall, 'ndcg': ndcg, 'hitrate': hitrate, 'diversity': diversity, 'discrimination': discrimination}
+
 
 def calculate_discrimination(history_cate_count, rec_cate_count):
     """
