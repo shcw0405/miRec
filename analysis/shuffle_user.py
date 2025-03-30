@@ -12,6 +12,25 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import get_DataLoader, get_exp_name, get_model, load_model, to_tensor, load_item_cate
 from evalution_copy import evaluate
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="测试用户嵌入打乱对模型性能的影响")
+    
+    # 数据集和模型参数
+    parser.add_argument('--dataset', type=str, default='tmall', help='数据集名称')
+    parser.add_argument('--model_type', type=str, default='ComiRec-SA', help='模型类型')
+    parser.add_argument('--hidden_size', type=int, default=64, help='隐藏层大小')
+    parser.add_argument('--interest_num', type=int, default=4, help='兴趣数量')
+    parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
+    
+    # 打乱相关参数
+    parser.add_argument('--shuffle_mode', type=str, default='permute', 
+                        choices=['permute', 'noise', 'random', 'zero', 'all', 'fixed'], 
+                        help='打乱模式: permute(置换), noise(添加噪声), random(随机化), zero(置零), all(测试所有模式), fixed(固定模式)')
+    parser.add_argument('--noise_level', type=float, default=1.0, help='噪声强度')
+    parser.add_argument('--random_seed', type=int, default=42, help='随机种子')
+    
+    return parser.parse_args()
+
 # 创建打乱用户嵌入的包装器类
 class UserEmbeddingShuffler:
     def __init__(self, model, shuffle_mode='permute', noise_level=1.0, seed=None):
@@ -20,7 +39,7 @@ class UserEmbeddingShuffler:
         
         参数：
         - model: 原始推荐模型
-        - shuffle_mode: 打乱模式，可选 'permute'(置换), 'noise'(添加噪声), 'random'(随机化)
+        - shuffle_mode: 打乱模式，可选 'permute'(置换), 'noise'(添加噪声), 'random'(随机化), 'zero'(置零), 'fixed'(固定模式)
         - noise_level: 噪声强度，当 shuffle_mode='noise' 时使用
         - seed: 随机种子，用于复现结果
         """
@@ -32,86 +51,65 @@ class UserEmbeddingShuffler:
             np.random.seed(seed)
             torch.manual_seed(seed)
         
-        # 保存原始前向传播函数
-        self.original_forward = model.forward
-        
-        # 替换模型的forward方法
-        def new_forward(items, user_ids, target_items=None, mask=None, time_matrix=None, device=None, train=True):
-            """
-            打乱用户嵌入的新forward函数
-            """
-            if not train:  # 只在测试时打乱
-                if self.shuffle_mode == 'permute':
-                    # 在batch内随机打乱用户ID
-                    idx = torch.randperm(user_ids.shape[0], device=user_ids.device)
-                    shuffled_user_ids = user_ids[idx]
-                    return self.original_forward(items, shuffled_user_ids, target_items, mask, time_matrix, device, train)
-                
-                elif self.shuffle_mode == 'noise':
-                    # 保存原始方法
-                    if hasattr(self.model, 'output_user'):
-                        original_output_user = self.model.output_user
-                        
-                        # 创建带噪声的版本
-                        def noisy_output_user(*args, **kwargs):
-                            user_emb = original_output_user(*args, **kwargs)
-                            # 添加噪声
-                            noise = torch.randn_like(user_emb) * self.noise_level
-                            return user_emb + noise
-                        
-                        # 替换方法
-                        self.model.output_user = noisy_output_user
-                        
-                        # 执行前向传播
-                        result = self.original_forward(items, user_ids, target_items, mask, time_matrix, device, train)
-                        
-                        # 恢复原始方法
-                        self.model.output_user = original_output_user
-                        return result
-                    else:
-                        # 如果没有output_user方法，使用原始forward
-                        return self.original_forward(items, user_ids, target_items, mask, time_matrix, device, train)
-                
-                elif self.shuffle_mode == 'random':
-                    # 完全随机化用户ID
-                    if hasattr(self.model, 'user_count'):
-                        random_user_ids = torch.randint(0, self.model.user_count, user_ids.shape, device=user_ids.device)
-                        return self.original_forward(items, random_user_ids, target_items, mask, time_matrix, device, train)
-                    else:
-                        # 保守处理：只在batch内打乱
-                        idx = torch.randperm(user_ids.shape[0], device=user_ids.device)
-                        shuffled_user_ids = user_ids[idx]
-                        return self.original_forward(items, shuffled_user_ids, target_items, mask, time_matrix, device, train)
-                
-                elif self.shuffle_mode == 'zero':
-                    # 将用户嵌入置为零向量
-                    if hasattr(self.model, 'output_user'):
-                        original_output_user = self.model.output_user
-                        
-                        def zero_output_user(*args, **kwargs):
-                            user_emb = original_output_user(*args, **kwargs)
-                            return torch.zeros_like(user_emb)
-                        
-                        self.model.output_user = zero_output_user
-                        result = self.original_forward(items, user_ids, target_items, mask, time_matrix, device, train)
-                        self.model.output_user = original_output_user
-                        return result
-                    else:
-                        return self.original_forward(items, user_ids, target_items, mask, time_matrix, device, train)
+        # 检查是否有get_embeddings方法，如果有，保存原始方法并替换
+        if hasattr(model, 'get_embeddings') and callable(getattr(model, 'get_embeddings')):
+            self.original_get_embeddings = model.get_embeddings
+            print("模型重写get_embeddings函数")
             
-            # 训练模式不打乱
-            return self.original_forward(items, user_ids, target_items, mask, time_matrix, device, train)
-        
-        # 使用新的forward函数替换原始函数
-        self.model.forward = new_forward
+            # 定义新的get_embeddings方法
+            def new_get_embeddings(item_list, user_list):
+                """重写的get_embeddings方法，用于在测试时直接修改用户嵌入"""
+                # 获取原始的物品和用户嵌入
+                item_eb, user_eb = self.original_get_embeddings(item_list, user_list)
+                
+                # 只在评估模式下修改用户嵌入
+                if not self.model.training:
+#                    print("打乱用户嵌入")
+                    device = user_eb.device
+                    batch_size = user_eb.shape[0]
+                    hidden_size = user_eb.shape[1]  # 用户嵌入维度
+                    
+                    if self.shuffle_mode == 'permute':
+                        # 在batch内随机打乱用户嵌入
+                        idx = torch.randperm(batch_size, device=device)
+                        user_eb = user_eb[idx]
+                    
+                    elif self.shuffle_mode == 'random':
+                        # 随机生成用户嵌入
+                        user_eb = torch.randn_like(user_eb, device=device)
+                        # 归一化到合理范围
+                        user_eb = user_eb * user_eb.std() / torch.std(user_eb, dim=1, keepdim=True)
+                    
+                    elif self.shuffle_mode == 'noise':
+                        # 在原用户嵌入基础上添加噪声
+                        noise = torch.randn_like(user_eb, device=device) * self.noise_level
+                        user_eb = user_eb + noise
+                    
+                    elif self.shuffle_mode == 'zero':
+                        # 将用户嵌入全部置零
+                        user_eb = torch.zeros_like(user_eb, device=device)
+                    
+                    elif self.shuffle_mode == 'fixed':
+                        # 将所有用户嵌入设为同一个值（使用第一个用户的嵌入）
+                        user_eb = user_eb[0:1].repeat(batch_size, 1)
+                
+                return item_eb, user_eb
+            
+            # 替换原始方法
+            self.model.get_embeddings = new_get_embeddings
+        else:
+            print("警告：模型没有get_embeddings方法，无法直接修改用户嵌入")
+            self.original_get_embeddings = None
     
     def restore(self):
-        """恢复原始模型的forward方法"""
-        self.model.forward = self.original_forward
+        """恢复原始模型的方法"""
+        # 恢复get_embeddings方法（如果有）
+        if hasattr(self, 'original_get_embeddings') and self.original_get_embeddings is not None:
+            self.model.get_embeddings = self.original_get_embeddings
 
 
 def shuffle_test(device, test_file, cate_file, dataset, model_type, item_count, user_count, batch_size, 
-                hidden_size, interest_num, seq_len, topN, shuffle_mode, noise_level=1.0, seed=42):
+                hidden_size, interest_num, seq_len, topN, shuffle_mode, noise_level=1.0, seed=42, args=None):
     """
     使用打乱用户嵌入的方式测试模型
     
@@ -128,7 +126,7 @@ def shuffle_test(device, test_file, cate_file, dataset, model_type, item_count, 
     - interest_num: 兴趣数量
     - seq_len: 序列长度
     - topN: 推荐物品数量
-    - shuffle_mode: 打乱模式 ('permute', 'noise', 'random', 'zero')
+    - shuffle_mode: 打乱模式 ('permute', 'noise', 'random', 'zero', 'fixed')
     - noise_level: 噪声强度
     - seed: 随机种子
     """
@@ -148,7 +146,7 @@ def shuffle_test(device, test_file, cate_file, dataset, model_type, item_count, 
     shuffle_wrapper = UserEmbeddingShuffler(model, shuffle_mode=shuffle_mode, noise_level=noise_level, seed=seed)
     
     # 获取测试数据
-    test_data = get_DataLoader(test_file, batch_size, seq_len, train_flag=0)
+    test_data = get_DataLoader(test_file, batch_size, seq_len, train_flag=0, args=args)
     
     # 评估模型
     metrics_20 = evaluate(model, test_data, hidden_size, device, 20)
@@ -189,14 +187,66 @@ def shuffle_test(device, test_file, cate_file, dataset, model_type, item_count, 
     }
 
 
+def calculate_performance_change(original_metrics, shuffled_metrics):
+    """
+    计算性能变化百分比
+    
+    参数:
+    - original_metrics: 原始模型性能指标
+    - shuffled_metrics: 打乱后的性能指标
+    
+    返回:
+    - 性能变化百分比字典
+    """
+    changes = {}
+    for metric in original_metrics:
+        if original_metrics[metric] > 0:  # 避免除以零
+            relative_change = (shuffled_metrics[metric] - original_metrics[metric]) / original_metrics[metric] * 100
+            changes[metric] = relative_change
+    
+    return changes
+
+
+def print_performance_analysis(results):
+    """
+    打印性能分析结果
+    
+    参数:
+    - results: 测试结果字典
+    """
+    print("\n=== 性能变化分析 ===")
+    print(f"{'模式':<15} {'Recall@20':<15} {'NDCG@20':<15} {'HitRate@20':<15} {'平均变化':<15}")
+    print("-" * 75)
+    
+    # 获取原始性能
+    original = list(results.values())[0]['original']['top20']
+    
+    # 计算并打印每种模式的性能变化
+    mode_avg_changes = {}
+    for mode, result in results.items():
+        shuffled = result['shuffle']['top20']
+        changes = calculate_performance_change(original, shuffled)
+        
+        # 计算平均变化
+        avg_change = sum(changes.values()) / len(changes) if changes else 0
+        mode_avg_changes[mode] = avg_change
+        
+        print(f"{mode:<15} {changes.get('recall', 0):<15.2f}% {changes.get('ndcg', 0):<15.2f}% {changes.get('hitrate', 0):<15.2f}% {avg_change:<15.2f}%")
+    
+    # 找出影响最大的模式
+    if mode_avg_changes:
+        most_impactful_mode = min(mode_avg_changes.items(), key=lambda x: x[1])
+        print(f"\n最显著影响的打乱模式: {most_impactful_mode[0]}，平均性能变化: {most_impactful_mode[1]:.2f}%")
+
+
 def test_multiple_shuffle_modes(device, test_file, cate_file, dataset, model_type, item_count, user_count, batch_size, 
-                               hidden_size, interest_num, seq_len, topN, seed=42):
+                               hidden_size, interest_num, seq_len, topN, seed=42, args=None):
     """测试多种打乱模式的性能影响"""
     
     results = {}
     
     # 测试不同的打乱模式
-    for mode in ['permute', 'noise', 'random', 'zero']:
+    for mode in ['permute', 'noise', 'random', 'zero', 'fixed']:
         print(f"\n=== 测试 {mode} 模式 ===")
         
         if mode == 'noise':
@@ -205,14 +255,14 @@ def test_multiple_shuffle_modes(device, test_file, cate_file, dataset, model_typ
                 print(f"\n--- 噪声强度: {noise_level} ---")
                 result = shuffle_test(
                     device, test_file, cate_file, dataset, model_type, item_count, user_count, batch_size,
-                    hidden_size, interest_num, seq_len, topN, mode, noise_level, seed
+                    hidden_size, interest_num, seq_len, topN, mode, noise_level, seed, args
                 )
                 results[f"{mode}_{noise_level}"] = result
         else:
             # 测试其他模式
             result = shuffle_test(
                 device, test_file, cate_file, dataset, model_type, item_count, user_count, batch_size,
-                hidden_size, interest_num, seq_len, topN, mode, 1.0, seed
+                hidden_size, interest_num, seq_len, topN, mode, 1.0, seed, args
             )
             results[mode] = result
     
@@ -234,28 +284,10 @@ def test_multiple_shuffle_modes(device, test_file, cate_file, dataset, model_typ
               f"{shuffle_metrics['top20']['hitrate']:<10.6f} {shuffle_metrics['top50']['recall']:<10.6f} "
               f"{shuffle_metrics['top50']['ndcg']:<10.6f} {shuffle_metrics['top50']['hitrate']:<10.6f}")
     
+    # 打印性能变化分析
+    print_performance_analysis(results)
+    
     return results
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="测试用户嵌入打乱对模型性能的影响")
-    
-    # 数据集和模型参数
-    parser.add_argument('--dataset', type=str, default='book', help='数据集名称')
-    parser.add_argument('--model_type', type=str, default='ComiRec-SA', help='模型类型')
-    parser.add_argument('--hidden_size', type=int, default=64, help='隐藏层大小')
-    parser.add_argument('--interest_num', type=int, default=4, help='兴趣数量')
-    parser.add_argument('--gpu', type=str, default='0', help='GPU ID')
-    
-    # 打乱相关参数
-    parser.add_argument('--shuffle_mode', type=str, default='permute', 
-                        choices=['permute', 'noise', 'random', 'zero', 'all'], 
-                        help='打乱模式: permute(置换), noise(添加噪声), random(随机化), zero(置零), all(测试所有模式)')
-    parser.add_argument('--noise_level', type=float, default=1.0, help='噪声强度')
-    parser.add_argument('--random_seed', type=int, default=42, help='随机种子')
-    
-    return parser.parse_args()
-
 
 if __name__ == '__main__':
     args = parse_args()
@@ -315,7 +347,7 @@ if __name__ == '__main__':
         results = test_multiple_shuffle_modes(
             device, test_file, cate_file, args.dataset, args.model_type, 
             item_count, user_count, batch_size, args.hidden_size, 
-            args.interest_num, seq_len, 20, args.random_seed
+            args.interest_num, seq_len, 20, args.random_seed, args
         )
     else:
         # 测试单个打乱模式
@@ -323,7 +355,7 @@ if __name__ == '__main__':
             device, test_file, cate_file, args.dataset, args.model_type, 
             item_count, user_count, batch_size, args.hidden_size, 
             args.interest_num, seq_len, 20, args.shuffle_mode, 
-            args.noise_level, args.random_seed
+            args.noise_level, args.random_seed, args
         )
     
     # 将结果保存到文件
@@ -334,15 +366,38 @@ if __name__ == '__main__':
     import json
     from datetime import datetime
     
+    # 递归函数处理嵌套字典，将可以转换的值转为float
+    def process_nested_dict(d):
+        if isinstance(d, dict):
+            return {k: process_nested_dict(v) for k, v in d.items()}
+        elif isinstance(d, list):
+            return [process_nested_dict(item) for item in d]
+        elif isinstance(d, (int, float, bool, str)) or d is None:
+            return d
+        else:
+            # 尝试转换为float，如果失败则转为字符串
+            try:
+                return float(d)
+            except (TypeError, ValueError):
+                return str(d)
+    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{results_dir}/shuffle_user_{args.dataset}_{args.model_type}_{args.shuffle_mode}_{timestamp}.json"
     
+    # 处理并保存结果
+    data_to_save = {
+        'args': vars(args),
+        'results': {}
+    }
+    
+    if args.shuffle_mode == 'all':
+        data_to_save['results'] = process_nested_dict(results)
+    else:
+        data_to_save['results'] = {
+            args.shuffle_mode: process_nested_dict(results)
+        }
+    
     with open(filename, 'w') as f:
-        json.dump({
-            'args': vars(args),
-            'results': {k: {k2: {k3: float(v3) for k3, v3 in v2.items()} 
-                           for k2, v2 in v.items()} 
-                       for k, v in results.items()}
-        }, f, indent=2)
+        json.dump(data_to_save, f, indent=2)
     
     print(f"结果已保存到: {filename}")
